@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """
-使用一维 ADE 有限差分模型拟合 Cd 和 Pb 的穿透曲线（BTC）CSV 数据。
+使用一维 ADE 有限差分模型拟合 Cd 和 Pb 的穿透曲线（BTC）表格数据。
 
 用法：
     python btc_fit_ade.py --cd Cd.csv --pb Pb.csv --output btc_fit_results.png
+
+如果聊天框无法识别 CSV，可把文件改名为 .txt 后上传或直接粘贴两列数据；
+脚本读取的是文件内容，不强制要求扩展名必须是 .csv。PDF 需要先另存/转换为
+含 Pv 和 Conc 两列的 CSV/TXT 表格后再拟合。
 """
 
 from __future__ import annotations
@@ -47,7 +51,7 @@ class FitResult:
     message: str
 
 
-# 输入读取与校验：检查 CSV 是否存在，并提取 Pv/Conc 两列。
+# 输入读取与校验：检查表格文件是否存在，并提取 Pv/Conc 两列。
 def validate_csv_path(path: str | Path) -> Path:
     file_path = Path(path).expanduser().resolve()
     if not file_path.exists():
@@ -59,10 +63,10 @@ def validate_csv_path(path: str | Path) -> Path:
 
 def load_btc_csv(path: str | Path, name: str) -> BTCData:
     file_path = validate_csv_path(path)
-    data = pd.read_csv(file_path)
+    data = pd.read_csv(file_path, sep=None, engine="python")
 
     if data.shape[1] < 2:
-        raise ValueError(f"{file_path} 必须至少包含两列：Pv 和 Conc")
+        raise ValueError(f"{file_path} 必须至少包含两列：Pv 和 Conc；如果来自 PDF，请先转换为 CSV/TXT 表格")
 
     columns_lower = {str(col).strip().lower(): col for col in data.columns}
     pv_col = columns_lower.get("pv", data.columns[0])
@@ -286,9 +290,9 @@ def plot_results(cd_result: FitResult, pb_result: FitResult, output_path: str | 
 
 # 命令行入口：解析文件路径、运行拟合并输出结果。
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="使用 ADE 有限差分模型拟合 Cd 和 Pb 的 BTC 数据。")
-    parser.add_argument("--cd", default="Cd.csv", help="Cd CSV 文件路径（包含 Pv 和 Conc 两列）")
-    parser.add_argument("--pb", default="Pb.csv", help="Pb CSV 文件路径（包含 Pv 和 Conc 两列）")
+    parser = argparse.ArgumentParser(description="使用 ADE 有限差分模型拟合 Cd 和 Pb 的 BTC 表格数据。")
+    parser.add_argument("--cd", default="Cd.csv", help="Cd 表格文件路径（CSV 或改名后的 TXT，包含 Pv 和 Conc 两列）")
+    parser.add_argument("--pb", default="Pb.csv", help="Pb 表格文件路径（CSV 或改名后的 TXT，包含 Pv 和 Conc 两列）")
     parser.add_argument("--output", default="btc_fit_results.png", help="输出 PNG 图片路径")
     parser.add_argument(
         "--fixed-dispersion",
