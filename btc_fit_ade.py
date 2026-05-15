@@ -4,6 +4,7 @@
 
 用法：
     python btc_fit_ade.py --cd Cd.csv --pb Pb.csv --output btc_fit_results.png
+    # 也可以只拟合 Cd：python btc_fit_ade.py --cd Cd.txt
 
 如果聊天框无法识别 CSV，可把文件改名为 .txt 后上传或直接粘贴两列数据；
 脚本读取的是文件内容，不强制要求扩展名必须是 .csv。PDF 需要先另存/转换为
@@ -17,7 +18,7 @@ import argparse
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Sequence
 
 import matplotlib
 
@@ -272,11 +273,15 @@ def fit_parameters(data: BTCData, *, fit_dispersion: bool = True) -> FitResult:
 
 
 # 绘图：在无 GUI 的服务器环境中保存 PNG 文件。
-def plot_results(cd_result: FitResult, pb_result: FitResult, output_path: str | Path = "btc_fit_results.png") -> None:
+def plot_results(results: Sequence[FitResult], output_path: str | Path = "btc_fit_results.png") -> None:
+    if not results:
+        raise ValueError("至少需要一个拟合结果才能绘图")
+
     output = Path(output_path).expanduser().resolve()
     fig, ax = plt.subplots(figsize=(9, 6), dpi=150)
+    colors = ("tab:blue", "tab:red", "tab:green", "tab:purple", "tab:orange")
 
-    for result, color in ((cd_result, "tab:blue"), (pb_result, "tab:red")):
+    for result, color in zip(results, colors, strict=False):
         pv_smooth = np.linspace(float(np.min(result.pv)), float(np.max(result.pv)), 250)
         conc_smooth = solve_ade_finite_difference(pv_smooth, result.k, result.dispersion, result.c0)
         ax.scatter(result.pv, result.conc_exp, s=35, color=color, alpha=0.75, label=f"{result.name} 实验值")
@@ -290,7 +295,7 @@ def plot_results(cd_result: FitResult, pb_result: FitResult, output_path: str | 
 
     ax.set_xlabel("孔体积 (Pv)")
     ax.set_ylabel("浓度 (Conc)")
-    ax.set_title("Cd 和 Pb 的 ADE 穿透曲线拟合")
+    ax.set_title("ADE 穿透曲线拟合")
     ax.grid(True, alpha=0.3)
     ax.legend(frameon=True)
     fig.tight_layout()
@@ -301,8 +306,8 @@ def plot_results(cd_result: FitResult, pb_result: FitResult, output_path: str | 
 # 命令行入口：解析文件路径、运行拟合并输出结果。
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="使用 ADE 有限差分模型拟合 Cd 和 Pb 的 BTC 表格数据。")
-    parser.add_argument("--cd", default="Cd.csv", help="Cd 表格文件路径（CSV 或改名后的 TXT；可有表头，也可直接两列数字）")
-    parser.add_argument("--pb", default="Pb.csv", help="Pb 表格文件路径（CSV 或改名后的 TXT；可有表头，也可直接两列数字）")
+    parser.add_argument("--cd", default=None, help="Cd 表格文件路径（CSV 或改名后的 TXT；可有表头，也可直接两列数字）")
+    parser.add_argument("--pb", default=None, help="Pb 表格文件路径（CSV 或改名后的 TXT；可有表头，也可直接两列数字）")
     parser.add_argument("--output", default="btc_fit_results.png", help="输出 PNG 图片路径")
     parser.add_argument(
         "--fixed-dispersion",
@@ -324,13 +329,30 @@ def print_fit_result(result: FitResult) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        cd_data = load_btc_csv(args.cd, "Cd")
-        pb_data = load_btc_csv(args.pb, "Pb")
-        cd_result = fit_parameters(cd_data, fit_dispersion=not args.fixed_dispersion)
-        pb_result = fit_parameters(pb_data, fit_dispersion=not args.fixed_dispersion)
-        print_fit_result(cd_result)
-        print_fit_result(pb_result)
-        plot_results(cd_result, pb_result, args.output)
+        inputs: list[tuple[str, str]] = []
+        if args.cd:
+            inputs.append(("Cd", args.cd))
+        if args.pb:
+            inputs.append(("Pb", args.pb))
+
+        # 如果没有显式指定路径，则自动使用当前目录中存在的默认文件；
+        # 这样既兼容 Cd.csv/Pb.csv 的常见用法，也允许只拟合刚粘贴/保存的 Cd 数据。
+        if not inputs:
+            for name, default_path in (("Cd", "Cd.csv"), ("Pb", "Pb.csv")):
+                if Path(default_path).exists():
+                    inputs.append((name, default_path))
+
+        if not inputs:
+            raise ValueError("请至少提供一个输入文件，例如 --cd Cd.txt；如果要同时拟合 Pb，再加 --pb Pb.txt")
+
+        results: list[FitResult] = []
+        for name, file_path in inputs:
+            data = load_btc_csv(file_path, name)
+            result = fit_parameters(data, fit_dispersion=not args.fixed_dispersion)
+            print_fit_result(result)
+            results.append(result)
+
+        plot_results(results, args.output)
         print(f"已保存图像到 {Path(args.output).expanduser().resolve()}")
     except Exception as exc:
         print(f"错误： {exc}", file=sys.stderr)
