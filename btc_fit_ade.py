@@ -7,7 +7,8 @@
 
 如果聊天框无法识别 CSV，可把文件改名为 .txt 后上传或直接粘贴两列数据；
 脚本读取的是文件内容，不强制要求扩展名必须是 .csv。PDF 需要先另存/转换为
-含 Pv 和 Conc 两列的 CSV/TXT 表格后再拟合。
+含 Pv 和 Conc 两列的 CSV/TXT 表格后再拟合。表格可以有表头，也可以像
+“0.219  0.435”这样直接给两列数字，空格、Tab、逗号、分号分隔均可。
 """
 
 from __future__ import annotations
@@ -63,14 +64,23 @@ def validate_csv_path(path: str | Path) -> Path:
 
 def load_btc_csv(path: str | Path, name: str) -> BTCData:
     file_path = validate_csv_path(path)
-    data = pd.read_csv(file_path, sep=None, engine="python")
 
-    if data.shape[1] < 2:
-        raise ValueError(f"{file_path} 必须至少包含两列：Pv 和 Conc；如果来自 PDF，请先转换为 CSV/TXT 表格")
+    # 先按“有表头”读取；若找不到 Pv/Conc 表头，则按“无表头两列数字”重读，
+    # 这样可直接使用从聊天框或 PDF 识别结果中复制出来的 Tab/空格分隔数据。
+    separator_pattern = r"[\s,;]+"
+    data_with_header = pd.read_csv(file_path, sep=separator_pattern, engine="python")
+    columns_lower = {str(col).strip().lower(): col for col in data_with_header.columns}
 
-    columns_lower = {str(col).strip().lower(): col for col in data.columns}
-    pv_col = columns_lower.get("pv", data.columns[0])
-    conc_col = columns_lower.get("conc", data.columns[1])
+    if "pv" in columns_lower and "conc" in columns_lower:
+        data = data_with_header
+        pv_col = columns_lower["pv"]
+        conc_col = columns_lower["conc"]
+    else:
+        data = pd.read_csv(file_path, sep=separator_pattern, engine="python", header=None)
+        if data.shape[1] < 2:
+            raise ValueError(f"{file_path} 必须至少包含两列：Pv 和 Conc；如果来自 PDF，请先转换为 CSV/TXT 表格")
+        pv_col = data.columns[0]
+        conc_col = data.columns[1]
 
     numeric = pd.DataFrame(
         {
@@ -291,8 +301,8 @@ def plot_results(cd_result: FitResult, pb_result: FitResult, output_path: str | 
 # 命令行入口：解析文件路径、运行拟合并输出结果。
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="使用 ADE 有限差分模型拟合 Cd 和 Pb 的 BTC 表格数据。")
-    parser.add_argument("--cd", default="Cd.csv", help="Cd 表格文件路径（CSV 或改名后的 TXT，包含 Pv 和 Conc 两列）")
-    parser.add_argument("--pb", default="Pb.csv", help="Pb 表格文件路径（CSV 或改名后的 TXT，包含 Pv 和 Conc 两列）")
+    parser.add_argument("--cd", default="Cd.csv", help="Cd 表格文件路径（CSV 或改名后的 TXT；可有表头，也可直接两列数字）")
+    parser.add_argument("--pb", default="Pb.csv", help="Pb 表格文件路径（CSV 或改名后的 TXT；可有表头，也可直接两列数字）")
     parser.add_argument("--output", default="btc_fit_results.png", help="输出 PNG 图片路径")
     parser.add_argument(
         "--fixed-dispersion",
