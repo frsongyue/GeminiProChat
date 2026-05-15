@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Fit Cd and Pb breakthrough-curve CSV data with a 1-D ADE finite-difference model.
+使用一维 ADE 有限差分模型拟合 Cd 和 Pb 的穿透曲线（BTC）CSV 数据。
 
-Usage:
+用法：
     python btc_fit_ade.py --cd Cd.csv --pb Pb.csv --output btc_fit_results.png
 """
 
@@ -25,6 +25,7 @@ from scipy.special import erfc
 from sklearn.metrics import r2_score
 
 
+# 数据类：保存实验数据和拟合结果，便于函数之间传递。
 @dataclass(frozen=True)
 class BTCData:
     name: str
@@ -46,12 +47,13 @@ class FitResult:
     message: str
 
 
+# 输入读取与校验：检查 CSV 是否存在，并提取 Pv/Conc 两列。
 def validate_csv_path(path: str | Path) -> Path:
     file_path = Path(path).expanduser().resolve()
     if not file_path.exists():
-        raise FileNotFoundError(f"Input file not found: {file_path}")
+        raise FileNotFoundError(f"找不到输入文件： {file_path}")
     if not file_path.is_file():
-        raise ValueError(f"Input path is not a file: {file_path}")
+        raise ValueError(f"输入路径不是文件： {file_path}")
     return file_path
 
 
@@ -60,7 +62,7 @@ def load_btc_csv(path: str | Path, name: str) -> BTCData:
     data = pd.read_csv(file_path)
 
     if data.shape[1] < 2:
-        raise ValueError(f"{file_path} must contain at least two columns: Pv and Conc")
+        raise ValueError(f"{file_path} 必须至少包含两列：Pv 和 Conc")
 
     columns_lower = {str(col).strip().lower(): col for col in data.columns}
     pv_col = columns_lower.get("pv", data.columns[0])
@@ -74,22 +76,23 @@ def load_btc_csv(path: str | Path, name: str) -> BTCData:
     ).dropna()
 
     if numeric.empty:
-        raise ValueError(f"{file_path} contains no valid numeric Pv/Conc rows")
+        raise ValueError(f"{file_path} 没有有效的数值型 Pv/Conc 数据行")
 
     numeric = numeric.sort_values("Pv")
     pv = numeric["Pv"].to_numpy(dtype=float)
     conc = numeric["Conc"].to_numpy(dtype=float)
 
     if np.any(np.diff(pv) <= 0):
-        raise ValueError(f"{file_path} contains duplicate or non-increasing pore-volume values")
+        raise ValueError(f"{file_path} 包含重复或非递增的孔体积（Pv）值")
     if np.any(pv < 0):
-        raise ValueError(f"{file_path} contains negative pore-volume values")
+        raise ValueError(f"{file_path} 包含负的孔体积（Pv）值")
 
     return BTCData(name=name, pv=pv, conc=conc)
 
 
+# ADE 模型：Ogata-Banks 解析边界条件和有限差分数值求解。
 def ogata_banks_step(x: np.ndarray | float, t: np.ndarray | float, velocity: float, dispersion: float, c0: float) -> np.ndarray:
-    """Ogata-Banks semi-infinite, step-input ADE solution without kinetic loss."""
+    """Ogata-Banks 半无限域、阶跃输入 ADE 解析解（不含动力学损失）。"""
     x_arr = np.asarray(x, dtype=float)
     t_arr = np.asarray(t, dtype=float)
     t_safe = np.maximum(t_arr, np.finfo(float).eps)
@@ -102,7 +105,7 @@ def ogata_banks_step(x: np.ndarray | float, t: np.ndarray | float, velocity: flo
 
 
 def default_sink_factor(x: np.ndarray, t: float) -> np.ndarray:
-    """Dimensionless multiplier f(x,t) for first-order loss; replace if needed."""
+    """一阶损失项中的无量纲乘子 f(x,t)；如有需要可替换为自定义函数。"""
     return np.ones_like(x, dtype=float)
 
 
@@ -118,11 +121,11 @@ def solve_ade_finite_difference(
     dt: float | None = None,
     sink_factor: Callable[[np.ndarray, float], np.ndarray] = default_sink_factor,
 ) -> np.ndarray:
-    """Backward-Euler finite-difference solver for 1-D ADE with first-order kinetic loss."""
+    """带一阶动力学损失项的一维 ADE 后向欧拉有限差分求解器。"""
     if np.any(times < 0):
-        raise ValueError("Simulation times must be non-negative")
+        raise ValueError("模拟时间（Pv）必须为非负数")
     if k < 0 or dispersion <= 0 or c0 < 0:
-        raise ValueError("Model parameters must satisfy K >= 0, D > 0, and C0 >= 0")
+        raise ValueError("模型参数必须满足 K >= 0、D > 0 且 C0 >= 0")
 
     times = np.asarray(times, dtype=float)
     order = np.argsort(times)
@@ -156,7 +159,7 @@ def solve_ade_finite_difference(
         next_time = current_time + step
         f_values = np.asarray(sink_factor(x, next_time), dtype=float)
         if f_values.shape != x.shape:
-            raise ValueError("sink_factor must return an array with the same shape as x")
+            raise ValueError("sink_factor 必须返回与 x 形状相同的数组")
 
         n_unknown = nx - 2
         matrix = np.zeros((n_unknown, n_unknown), dtype=float)
@@ -198,6 +201,7 @@ def solve_ade_finite_difference(
     return result
 
 
+# 参数拟合：使用最小二乘优化 K、D 和入口浓度 C0。
 def fit_parameters(data: BTCData, *, fit_dispersion: bool = True) -> FitResult:
     pv = data.pv.astype(float)
     conc = data.conc.astype(float)
@@ -253,6 +257,7 @@ def fit_parameters(data: BTCData, *, fit_dispersion: bool = True) -> FitResult:
     )
 
 
+# 绘图：在无 GUI 的服务器环境中保存 PNG 文件。
 def plot_results(cd_result: FitResult, pb_result: FitResult, output_path: str | Path = "btc_fit_results.png") -> None:
     output = Path(output_path).expanduser().resolve()
     fig, ax = plt.subplots(figsize=(9, 6), dpi=150)
@@ -260,18 +265,18 @@ def plot_results(cd_result: FitResult, pb_result: FitResult, output_path: str | 
     for result, color in ((cd_result, "tab:blue"), (pb_result, "tab:red")):
         pv_smooth = np.linspace(float(np.min(result.pv)), float(np.max(result.pv)), 250)
         conc_smooth = solve_ade_finite_difference(pv_smooth, result.k, result.dispersion, result.c0)
-        ax.scatter(result.pv, result.conc_exp, s=35, color=color, alpha=0.75, label=f"{result.name} experimental")
+        ax.scatter(result.pv, result.conc_exp, s=35, color=color, alpha=0.75, label=f"{result.name} 实验值")
         ax.plot(
             pv_smooth,
             conc_smooth,
             color=color,
             linewidth=2.0,
-            label=f"{result.name} ADE fit (R²={result.r2:.3f})",
+            label=f"{result.name} ADE 拟合 (R²={result.r2:.3f})",
         )
 
-    ax.set_xlabel("Pore volume (Pv)")
-    ax.set_ylabel("Concentration (Conc)")
-    ax.set_title("ADE breakthrough-curve fits for Cd and Pb")
+    ax.set_xlabel("孔体积 (Pv)")
+    ax.set_ylabel("浓度 (Conc)")
+    ax.set_title("Cd 和 Pb 的 ADE 穿透曲线拟合")
     ax.grid(True, alpha=0.3)
     ax.legend(frameon=True)
     fig.tight_layout()
@@ -279,26 +284,27 @@ def plot_results(cd_result: FitResult, pb_result: FitResult, output_path: str | 
     plt.close(fig)
 
 
+# 命令行入口：解析文件路径、运行拟合并输出结果。
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Fit Cd and Pb BTC data with an ADE finite-difference model.")
-    parser.add_argument("--cd", default="Cd.csv", help="Path to Cd CSV file with Pv and Conc columns")
-    parser.add_argument("--pb", default="Pb.csv", help="Path to Pb CSV file with Pv and Conc columns")
-    parser.add_argument("--output", default="btc_fit_results.png", help="Output PNG path")
+    parser = argparse.ArgumentParser(description="使用 ADE 有限差分模型拟合 Cd 和 Pb 的 BTC 数据。")
+    parser.add_argument("--cd", default="Cd.csv", help="Cd CSV 文件路径（包含 Pv 和 Conc 两列）")
+    parser.add_argument("--pb", default="Pb.csv", help="Pb CSV 文件路径（包含 Pv 和 Conc 两列）")
+    parser.add_argument("--output", default="btc_fit_results.png", help="输出 PNG 图片路径")
     parser.add_argument(
         "--fixed-dispersion",
         action="store_true",
-        help="Fit only K and C0 while keeping dispersion fixed at the default value",
+        help="仅拟合 K 和 C0，并将弥散系数固定为默认值",
     )
     return parser.parse_args(argv)
 
 
 def print_fit_result(result: FitResult) -> None:
-    print(f"{result.name} fit:")
+    print(f"{result.name} 拟合结果：")
     print(f"  K = {result.k:.6g}")
     print(f"  D = {result.dispersion:.6g}")
     print(f"  C0 = {result.c0:.6g}")
     print(f"  R² = {result.r2:.6g}")
-    print(f"  Optimization success = {result.success} ({result.message})")
+    print(f"  优化是否成功 = {result.success} ({result.message})")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -311,9 +317,9 @@ def main(argv: list[str] | None = None) -> int:
         print_fit_result(cd_result)
         print_fit_result(pb_result)
         plot_results(cd_result, pb_result, args.output)
-        print(f"Saved plot to {Path(args.output).expanduser().resolve()}")
+        print(f"已保存图像到 {Path(args.output).expanduser().resolve()}")
     except Exception as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        print(f"错误： {exc}", file=sys.stderr)
         return 1
     return 0
 
