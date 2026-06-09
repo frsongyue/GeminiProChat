@@ -104,6 +104,26 @@ You can control the website through environment variables.
     pnpm run dev
    ```
 
+## BTC Fitting CLI
+
+This repository also includes `btc_fit_ade.py`, a standalone Python CLI for fitting Cd/Pb breakthrough-curve tables with a one-dimensional ADE finite-difference model.
+
+Use Python 3.10 or later, then install the scientific Python dependencies:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements-btc.txt
+```
+
+Run the fitter with one or both input files:
+
+```bash
+python btc_fit_ade.py --cd Cd.csv --pb Pb.csv --output btc_fit_results.png
+```
+
+Input files must contain `Pv` and `Conc` columns, or two numeric columns separated by spaces, tabs, commas, or semicolons.
+
 ## Acknowledgements
 
 This project is inspired by and based on the following open-source project:
