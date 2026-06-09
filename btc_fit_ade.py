@@ -28,7 +28,6 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import least_squares
 from scipy.special import erfc
-from sklearn.metrics import r2_score
 
 
 # 数据类：保存实验数据和拟合结果，便于函数之间传递。
@@ -216,6 +215,16 @@ def solve_ade_finite_difference(
     return result
 
 
+def calculate_r2_score(observed: np.ndarray, predicted: np.ndarray) -> float:
+    observed = np.asarray(observed, dtype=float)
+    predicted = np.asarray(predicted, dtype=float)
+    residual_sum = float(np.sum((observed - predicted) ** 2))
+    total_sum = float(np.sum((observed - np.mean(observed)) ** 2))
+    if total_sum == 0.0:
+        return float("nan")
+    return 1.0 - residual_sum / total_sum
+
+
 # 参数拟合：使用最小二乘优化 K、D 和入口浓度 C0。
 def fit_parameters(data: BTCData, *, fit_dispersion: bool = True) -> FitResult:
     pv = data.pv.astype(float)
@@ -256,7 +265,7 @@ def fit_parameters(data: BTCData, *, fit_dispersion: bool = True) -> FitResult:
 
     k_fit, d_fit, c0_fit = unpack(optimization.x)
     conc_fit = solve_ade_finite_difference(pv, k_fit, d_fit, c0_fit)
-    r2 = float(r2_score(conc, conc_fit)) if len(conc) > 1 else float("nan")
+    r2 = calculate_r2_score(conc, conc_fit) if len(conc) > 1 else float("nan")
 
     return FitResult(
         name=data.name,
